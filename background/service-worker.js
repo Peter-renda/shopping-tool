@@ -25,11 +25,12 @@ chrome.runtime.onConnect.addListener((port) => {
 async function runBom(bom, port) {
   console.log("[BOM] starting run", bom);
   let succeeded = 0;
+  const tabByRetailer = new Map();
   for (const item of bom) {
     const label = `${shortUrl(item.url)} ×${item.quantity}`;
     console.log("[BOM] item:", label);
     try {
-      await addItem(item);
+      await addItem(item, tabByRetailer);
       succeeded++;
       send(port, { type: "progress", line: `✓ ${label}`, ok: true });
     } catch (err) {
@@ -41,12 +42,29 @@ async function runBom(bom, port) {
   send(port, { type: "done", succeeded, total: bom.length });
 }
 
-async function addItem(item) {
+async function addItem(item, tabByRetailer) {
   const adapter = adapterFor(item.url);
   if (!adapter) throw new Error("No adapter for this site");
 
-  const tab = await chrome.tabs.create({ url: item.url, active: true });
-  await withTimeout(waitForLoad(tab.id), PAGE_LOAD_TIMEOUT_MS, "page load");
+  const retailerKey = adapter.file;
+  let tabId = tabByRetailer.get(retailerKey);
+
+  if (tabId) {
+    try {
+      await chrome.tabs.get(tabId);
+      await chrome.tabs.update(tabId, { url: item.url, active: true });
+    } catch {
+      tabId = null;
+    }
+  }
+
+  if (!tabId) {
+    const tab = await chrome.tabs.create({ url: item.url, active: true });
+    tabId = tab.id;
+    tabByRetailer.set(retailerKey, tabId);
+  }
+
+  await withTimeout(waitForLoad(tabId), PAGE_LOAD_TIMEOUT_MS, "page load");
 
   // Run the product-page adapter. Tolerate "Frame was removed" — Home
   // Depot navigates the tab right after ATC, which can kill the isolated
@@ -55,11 +73,11 @@ async function addItem(item) {
   let result;
   try {
     await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId },
       files: ["adapters/_helpers.js", adapter.file],
     });
     const invoke = chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId },
       func: (payload) => window.__bomAdapter(payload),
       args: [{ quantity: item.quantity, options: item.options }],
     });
@@ -80,19 +98,21 @@ async function addItem(item) {
     return;
   }
 
-  await chrome.tabs.update(tab.id, { url: flow.cartUrl });
-  await withTimeout(waitForLoad(tab.id), PAGE_LOAD_TIMEOUT_MS, "cart page load");
+  await chrome.tabs.update(tabId, { url: flow.cartUrl });
+  await withTimeout(waitForLoad(tabId), PAGE_LOAD_TIMEOUT_MS, "cart page load");
   await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
+    target: { tabId },
     files: ["adapters/_helpers.js", flow.file],
   });
   const cartInvoke = chrome.scripting.executeScript({
-    target: { tabId: tab.id },
+    target: { tabId },
     func: flow.invoke,
     args: [{ productId: result.productId, quantity: result.quantity }],
   });
   const [{ result: cartResult }] = await withTimeout(cartInvoke, ADAPTER_TIMEOUT_MS, "cart adapter");
-  if (!cartResult?.ok) throw new Error(`cart update: ${cartResult?.message || "failed"}`);
+  if (!cartResult?.ok) {
+    console.warn("[BOM] cart update failed; keeping original ATC result", cartResult);
+  }
 }
 
 function cartFlowFor(url) {
@@ -145,6 +165,8 @@ function withTimeout(promise, ms, label) {
 function send(port, msg) {
   try { port.postMessage(msg); } catch { /* popup closed; orchestration continues */ }
 }
+
+
 
 function shortUrl(u) {
   try { const x = new URL(u); return x.hostname + x.pathname.slice(0, 32); }

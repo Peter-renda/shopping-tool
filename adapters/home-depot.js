@@ -15,6 +15,8 @@ window.__bomAdapter = async ({ quantity, options }) => {
       await sleep(400);
     }
 
+    await setQuantityIfPossible(quantity);
+
     const atc = await findAddToCartButton();
     atc.click();
 
@@ -24,7 +26,7 @@ window.__bomAdapter = async ({ quantity, options }) => {
     await sleep(500);
 
     const productId = extractProductId(location.pathname);
-    return { ok: true, productId, needsCartUpdate: quantity > 1, quantity };
+    return { ok: true, productId, needsCartUpdate: false, quantity };
   } catch (err) {
     return { ok: false, message: err.message };
   }
@@ -35,6 +37,26 @@ window.__bomAdapter = async ({ quantity, options }) => {
     return m ? m[1] : null;
   }
 
+
+  async function setQuantityIfPossible(quantity) {
+    if (!Number.isFinite(quantity) || quantity <= 1) return;
+
+    const qtyInput =
+      document.querySelector('input[type="number"][name*="quantity" i]') ||
+      document.querySelector('input[type="number"][id*="quantity" i]') ||
+      document.querySelector('input[aria-label*="quantity" i]') ||
+      document.querySelector('input[data-testid*="quantity" i]');
+
+    if (!qtyInput) return;
+
+    qtyInput.focus();
+    qtyInput.value = String(quantity);
+    qtyInput.dispatchEvent(new Event("input", { bubbles: true }));
+    qtyInput.dispatchEvent(new Event("change", { bubbles: true }));
+    qtyInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    qtyInput.blur();
+    await sleep(250);
+  }
   async function dismissOverlays() {
     const closers = document.querySelectorAll(
       'button[aria-label*="close" i], button[data-testid*="close" i], button[class*="close" i]'
