@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "BOM Cart Filler",
+  "version": "0.1.0",
+  "description": "Read a CSV bill of materials and add every line item to the retailer's cart with the right quantity and options.",
+  "action": {
+    "default_title": "BOM Cart Filler",
+    "default_popup": "popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*.homedepot.com/*",
+    "https://*.lowes.com/*",
+    "https://*.menards.com/*",
+    "https://*.architecturaldepot.com/*"
+  ]
+}
