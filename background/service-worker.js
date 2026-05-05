@@ -25,12 +25,12 @@ chrome.runtime.onConnect.addListener((port) => {
 async function runBom(bom, port) {
   console.log("[BOM] starting run", bom);
   let succeeded = 0;
-  const tabByDomain = new Map();
+  const tabByRetailer = new Map();
   for (const item of bom) {
     const label = `${shortUrl(item.url)} ×${item.quantity}`;
     console.log("[BOM] item:", label);
     try {
-      await addItem(item, tabByDomain);
+      await addItem(item, tabByRetailer);
       succeeded++;
       send(port, { type: "progress", line: `✓ ${label}`, ok: true });
     } catch (err) {
@@ -42,12 +42,12 @@ async function runBom(bom, port) {
   send(port, { type: "done", succeeded, total: bom.length });
 }
 
-async function addItem(item, tabByDomain) {
+async function addItem(item, tabByRetailer) {
   const adapter = adapterFor(item.url);
   if (!adapter) throw new Error("No adapter for this site");
 
-  const domainKey = domainFor(item.url);
-  let tabId = tabByDomain.get(domainKey);
+  const retailerKey = adapter.file;
+  let tabId = tabByRetailer.get(retailerKey);
 
   if (tabId) {
     try {
@@ -61,7 +61,7 @@ async function addItem(item, tabByDomain) {
   if (!tabId) {
     const tab = await chrome.tabs.create({ url: item.url, active: true });
     tabId = tab.id;
-    tabByDomain.set(domainKey, tabId);
+    tabByRetailer.set(retailerKey, tabId);
   }
 
   await withTimeout(waitForLoad(tabId), PAGE_LOAD_TIMEOUT_MS, "page load");
@@ -167,15 +167,7 @@ function send(port, msg) {
 }
 
 
-function domainFor(url) {
-  try {
-    const host = new URL(url).hostname;
-    const parts = host.split(".");
-    return parts.length >= 2 ? parts.slice(-2).join(".") : host;
-  } catch {
-    return url;
-  }
-}
+
 function shortUrl(u) {
   try { const x = new URL(u); return x.hostname + x.pathname.slice(0, 32); }
   catch { return u.slice(0, 48); }
