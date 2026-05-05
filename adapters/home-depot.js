@@ -20,11 +20,16 @@ window.__bomAdapter = async ({ quantity, options }) => {
     //    live next to it.
     const atc = await findAddToCartButton();
 
-    // 3. Quantity — try input field, then +/- buttons.
-    await setQuantity(atc, quantity);
+    // 3. Quantity — try input field, then +/- buttons, then repeat-ATC.
+    const { strategy } = await setQuantity(atc, quantity);
 
-    // 4. Click ATC.
-    atc.click();
+    // 4. Click ATC. For the repeat-atc strategy, click `quantity` times
+    //    with a settle delay between clicks so the buybox can re-arm.
+    const clicks = strategy === "repeat-atc" ? quantity : 1;
+    for (let i = 0; i < clicks; i++) {
+      atc.click();
+      if (i < clicks - 1) await sleep(700);
+    }
 
     // 5. Confirmation.
     await waitFor(
@@ -32,7 +37,7 @@ window.__bomAdapter = async ({ quantity, options }) => {
       { timeoutMs: 10_000 }
     ).catch(() => {});
 
-    return { ok: true };
+    return { ok: true, strategy };
   } catch (err) {
     return { ok: false, message: err.message };
   }
@@ -91,30 +96,46 @@ window.__bomAdapter = async ({ quantity, options }) => {
   }
 
   async function setQuantity(atc, quantity) {
-    if (quantity === 1) return;
+    if (quantity === 1) return { strategy: "single" };
 
-    // Look for a number input near the ATC button first (same form/section).
-    const scope = atc.closest('form, section, [data-testid*="buybox" i], [class*="buybox" i]') || document;
-    const input = scope.querySelector(
-      'input[type="number"], input[name*="quantity" i], input[aria-label*="quantity" i], input[data-testid*="quantity" i]'
+    // Search the whole document, not just the buybox — some HD templates
+    // render the qty control outside the form element.
+    const input = document.querySelector(
+      'input[type="number"], input[name*="quantity" i], input[aria-label*="quantity" i], input[data-testid*="quantity" i], input[id*="quantity" i], input[class*="quantity" i]'
     );
     if (input) {
       setInputValue(input, quantity);
-      return;
+      return { strategy: "input" };
     }
 
-    // Fall back to plus-button increments.
-    const plus = scope.querySelector(
-      'button[aria-label*="increase" i], button[aria-label*="plus" i], button[data-testid*="quantity-plus" i]'
+    // <select> dropdown (some bulk-pack products).
+    const select = document.querySelector(
+      'select[name*="quantity" i], select[aria-label*="quantity" i], select[data-testid*="quantity" i]'
+    );
+    if (select) {
+      const opt = [...select.options].find((o) => Number(o.value) === quantity || Number(o.textContent) === quantity);
+      if (opt) {
+        select.value = opt.value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        return { strategy: "select" };
+      }
+    }
+
+    // Plus-button increments.
+    const plus = document.querySelector(
+      'button[aria-label*="increase" i], button[aria-label*="plus" i], button[data-testid*="quantity-plus" i], button[data-testid*="increment" i]'
     );
     if (plus) {
       for (let i = 1; i < quantity; i++) {
         plus.click();
         await sleep(80);
       }
-      return;
+      return { strategy: "stepper" };
     }
 
-    throw new Error(`Could not find quantity control to set qty=${quantity}`);
+    // Last-resort fallback: click ATC `quantity` times. The first click
+    // happens in the caller, so we mark this strategy and the caller
+    // handles the extra clicks after each one settles.
+    return { strategy: "repeat-atc" };
   }
 };
